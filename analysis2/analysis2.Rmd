@@ -1,0 +1,806 @@
+---
+title: "Analysis 2: no variable caps"
+output: html_document
+date: "2024-09-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+library(tidyverse)
+library(compareC)
+library(kableExtra)
+library(gtsummary)
+
+library(survival)
+library(glmnet)
+library(randomForestSRC)
+library(gbm)
+library(mboost)
+library(xgboost)
+library(CoxBoost)
+library(survivalmodels)
+
+library(glmnetUtils)
+library(mlr3)
+library(mlr3proba)
+library(paradox)
+library(mlr3tuning)
+library(mlr3extralearners)
+library(mlr3pipelines)
+
+# Set background to be white for all ggplots
+theme_set(theme_classic())
+
+# Parallelization for CoxBoost
+library(snowfall)
+sfInit(parallel = TRUE, cpus = parallel::detectCores() - 2)
+```
+
+## Data processing
+
+Read in the training and test data. 
+
+```{r}
+dir = "/Users/jliang/Library/CloudStorage/Box-Box/MELD\ QSU/data/"
+train_df = read.csv(paste0(dir, "MELD3_Dev_Cohort.csv"))
+test_df = read.csv("/Users/jliang/Library/CloudStorage/Box-Box/STAR_files_as_of_4_5_2024/MELD\ 3.0/MELD3_SecVal_Cohort_2019_23.csv")
+```
+
+Subset the data to only include the covariates of interest (MELD-transformed and raw variables) and time-to-event for 90-day death. Split the second test set into two: 1/1/2019 to 1/1/2021 (exclusive) and 1/1/2021 (inclusive) to end of available data. 
+
+```{r}
+# Variables used for modeling
+my_factor_vars = list(
+  "Ethnicity_Cat" = c("Ethnicity_Cat2_Black", "Ethnicity_Cat4_Hispanic", 
+                      "Ethnicity_Cat5_Asian", "Ethnicity_Cat6_Other"), 
+  "ASCITES_BL" = c("ASCITES_BLModerate", "ASCITES_BLSlight"), 
+  "INIT_ENCEPH" = c("INIT_ENCEPH2", "INIT_ENCEPH3")
+)
+my_vars = c("INIT_BILIRUBIN", "log_BILIRUBIN", 
+            "INIT_SERUM_SODIUM", "log_SERUM_SODIUM", 
+            "INIT_INR", "log_INR", 
+            "INIT_SERUM_CREAT", "log_SERUM_CREAT", 
+            "INIT_ALBUMIN", "log_ALBUMIN", 
+            "FEMALE", "DIALYSIS", 
+            "SurvTime_by90d", "Death_by90d")
+
+my_train_df = train_df %>% 
+  mutate(
+    # Convert categorical variables to factors
+    mutate(across(all_of(names(my_factor_vars)), ~factor(.))), 
+    # Define female and dialysis as indicators
+    FEMALE = ifelse(GENDER == "F", 1, 0), 
+    DIALYSIS = ifelse(INIT_DIALYSIS_PRIOR_WEEK == "Y", 1, 0), 
+    # Log transform age
+    log_AGE = log(INIT_AGE), 
+    # Set lower/upper bounds for MELD variables and log transform
+    # Bilirubim
+    MELD_BILIRUBIN = ifelse(INIT_BILIRUBIN < 1, 1, INIT_BILIRUBIN), 
+    log_MELD_BILIRUBIN = log(MELD_BILIRUBIN), 
+    log_BILIRUBIN = log(INIT_BILIRUBIN), 
+    # Sodium
+    MELD_SERUM_SODIUM = 137 - ifelse(INIT_SERUM_SODIUM > 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM < 125, 125, 
+                                            INIT_SERUM_SODIUM)), 
+    cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM > 137, 137, 
+                              ifelse(INIT_SERUM_SODIUM < 125, 125, 
+                                     INIT_SERUM_SODIUM)), 
+    log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
+    log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
+    # INR
+    MELD_INR = ifelse(INIT_INR < 1, 1, INIT_INR), 
+    log_MELD_INR = log(MELD_INR), 
+    log_INR = log(INIT_INR), 
+    # Creatinine
+    MELD_SERUM_CREAT = ifelse(INIT_SERUM_CREAT > 3 | INIT_DIALYSIS_PRIOR_WEEK == "Y", 3, 
+                              ifelse(INIT_SERUM_CREAT < 1, 1, INIT_SERUM_CREAT)), 
+    log_MELD_SERUM_CREAT = log(MELD_SERUM_CREAT), 
+    log_SERUM_CREAT = log(INIT_SERUM_CREAT), 
+    # Albumin
+    MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN > 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN)), 
+    cap_ALBUMIN = ifelse(INIT_ALBUMIN > 3.5, 3.5, INIT_ALBUMIN), 
+    log_cap_ALBUMIN = log(cap_ALBUMIN), 
+    log_ALBUMIN = log(INIT_ALBUMIN))
+
+my_test_df = test_df %>% 
+  # 1/1/2021 (inclusive) to end of available data
+  filter(mdy(INIT_DATE) >= as.Date("2021-01-01")) %>% 
+  mutate(
+    # Convert categorical variables to factors
+    mutate(across(all_of(names(my_factor_vars)), ~factor(.))), 
+    # Define female and dialysis as indicators
+    FEMALE = ifelse(GENDER == "F", 1, 0), 
+    DIALYSIS = ifelse(INIT_DIALYSIS_PRIOR_WEEK == "Y", 1, 0), 
+    # Log transform age
+    log_AGE = log(INIT_AGE), 
+    # Set lower/upper bounds for MELD variables and log transform
+    # Bilirubim
+    MELD_BILIRUBIN = ifelse(INIT_BILIRUBIN < 1, 1, INIT_BILIRUBIN), 
+    log_MELD_BILIRUBIN = log(MELD_BILIRUBIN), 
+    log_BILIRUBIN = log(INIT_BILIRUBIN), 
+    # Sodium
+    MELD_SERUM_SODIUM = 137 - ifelse(INIT_SERUM_SODIUM > 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM < 125, 125, 
+                                            INIT_SERUM_SODIUM)), 
+    cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM > 137, 137, 
+                              ifelse(INIT_SERUM_SODIUM < 125, 125, 
+                                     INIT_SERUM_SODIUM)), 
+    log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
+    log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
+    # INR
+    MELD_INR = ifelse(INIT_INR < 1, 1, INIT_INR), 
+    log_MELD_INR = log(MELD_INR), 
+    log_INR = log(INIT_INR), 
+    # Creatinine
+    MELD_SERUM_CREAT = ifelse(INIT_SERUM_CREAT > 3 | INIT_DIALYSIS_PRIOR_WEEK == "Y", 3, 
+                              ifelse(INIT_SERUM_CREAT < 1, 1, INIT_SERUM_CREAT)), 
+    log_MELD_SERUM_CREAT = log(MELD_SERUM_CREAT), 
+    log_SERUM_CREAT = log(INIT_SERUM_CREAT), 
+    # Albumin
+    MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN > 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN)), 
+    cap_ALBUMIN = ifelse(INIT_ALBUMIN > 3.5, 3.5, INIT_ALBUMIN), 
+    log_cap_ALBUMIN = log(cap_ALBUMIN), 
+    log_ALBUMIN = log(INIT_ALBUMIN))
+
+
+# Convert multi-level factors to indicators
+my_train_df = data.frame(my_train_df, 
+                         model.matrix(~Ethnicity_Cat + ASCITES_BL + INIT_ENCEPH, 
+                                      my_train_df)[,-1])
+my_test_df = data.frame(my_test_df, 
+                        model.matrix(~Ethnicity_Cat + ASCITES_BL + INIT_ENCEPH, 
+                                     my_test_df)[,-1])
+
+
+# Set up tasks for each dataset
+task_train = TaskSurv$new(
+  "my_train_df",
+  my_train_df %>% 
+    dplyr::select(all_of(my_vars)), 
+  time = "SurvTime_by90d", event = "Death_by90d")
+task_test = TaskSurv$new(
+    "my_test_df", 
+    my_test_df %>% 
+      dplyr::select(all_of(my_vars)), 
+    time = "SurvTime_by90d", event = "Death_by90d")
+```
+
+## Modeling
+
+### MELD
+
+MELD3 score. 
+
+```{r}
+# Predict on data sets
+preds_MELD_train = my_train_df %>% 
+  mutate(
+    MELD3 = round(1.33 * FEMALE + 
+                    4.56 * log_MELD_BILIRUBIN + 0.82 * MELD_SERUM_SODIUM - 
+                    0.24 * MELD_SERUM_SODIUM * log_MELD_BILIRUBIN + 
+                    9.09 * log_MELD_INR + 
+                    11.14 * log_MELD_SERUM_CREAT + 1.85 * MELD_ALBUMIN - 
+                    1.83 * MELD_ALBUMIN * log_MELD_SERUM_CREAT + 6)
+  ) %>% pull(MELD3)
+
+preds_MELD_test = my_test_df %>% 
+  mutate(
+    MELD3 = round(1.33 * FEMALE + 
+                    4.56 * log_MELD_BILIRUBIN + 0.82 * MELD_SERUM_SODIUM - 
+                    0.24 * MELD_SERUM_SODIUM * log_MELD_BILIRUBIN + 
+                    9.09 * log_MELD_INR + 
+                    11.14 * log_MELD_SERUM_CREAT + 1.85 * MELD_ALBUMIN - 
+                    1.83 * MELD_ALBUMIN * log_MELD_SERUM_CREAT + 6)
+  ) %>% pull(MELD3)
+```
+
+### Machine learning
+
+For all machine learning models, we will include the following covariates: 
+
+1. Sex
+2. Bilirubin and log(bilirubin)
+3. Sodium and log(sodium)
+4. INR and log(INR)
+5. Creatinine and log(creatinine)
+6. Dialysis
+7. Albumin and log(albumin)
+
+#### Regularized Cox PH models (lasso, ridge, and elastic-net)
+
+- Include all two-way interactions
+- Tuning parameters:  regularization parameter `lambda`, plus weight for elastic-net `alpha` (`alpha` = 1 for lasso and `alpha` = 0 for ridge)
+- Tuning method: built-in CV grid search (uses Harrel's C instead of default partial likelihood as CV loss)
+- Currently using 1 SE instead of minimum lambda
+
+```{r}
+# Set up model matrices with all 2-way interactions
+# Results in 73 predictors
+
+my_train_mat = data.frame(
+  my_train_df %>% 
+    dplyr::select(SurvTime_by90d, Death_by90d), 
+  model.matrix(Surv(SurvTime_by90d, Death_by90d) ~ .^2, # All 2-way interactions
+               data = my_train_df %>% dplyr::select(all_of(my_vars)))
+) %>% 
+  # Exclude the garbage interactions
+  dplyr::select(-c(X.Intercept., 
+                   INIT_BILIRUBIN.log_BILIRUBIN, 
+                   INIT_SERUM_SODIUM.log_SERUM_SODIUM, 
+                   INIT_INR.log_INR, 
+                   INIT_SERUM_CREAT.log_SERUM_CREAT, 
+                   INIT_ALBUMIN.log_ALBUMIN))
+
+my_test_mat = data.frame(
+  my_test_df %>% 
+    dplyr::select(SurvTime_by90d, Death_by90d), 
+  model.matrix(Surv(SurvTime_by90d, Death_by90d) ~ .^2, # All 2-way interactions
+               data = my_test_df %>% dplyr::select(all_of(my_vars)))
+) %>% 
+  # Exclude the garbage interactions
+  dplyr::select(-c(X.Intercept., 
+                   INIT_BILIRUBIN.log_BILIRUBIN, 
+                   INIT_SERUM_SODIUM.log_SERUM_SODIUM, 
+                   INIT_INR.log_INR, 
+                   INIT_SERUM_CREAT.log_SERUM_CREAT, 
+                   INIT_ALBUMIN.log_ALBUMIN))
+```
+
+```{r, eval = FALSE}
+# CV to find optimal lambda and alpha parameters for regularized Cox PH models
+# ~20 minutes
+set.seed(1)
+fit_cv_enet = 
+  cva.glmnet(Surv(SurvTime_by90d, Death_by90d) ~ ., 
+             data = my_train_mat %>% filter(SurvTime_by90d > 0), 
+             family = "cox", type.measure = "C")
+```
+
+```{r, echo = FALSE}
+load("glmnet.rData")
+```
+
+```{r}
+# Organize CV results
+cv_res_tab = do.call(
+  rbind, 
+  lapply(1:length(fit_cv_enet$alpha), function(i) {
+    data.frame(Alpha = fit_cv_enet$alpha[i], 
+               as.data.frame(print(fit_cv_enet$modlist[[i]]))["1se",])
+    })
+)
+rownames(cv_res_tab) = NULL
+cv_res_tab = cv_res_tab[c(1, which.max(cv_res_tab$Measure), nrow(cv_res_tab)),] 
+cv_res_tab = data.frame(Model = c("Ridge", "Elastic-net", "Lasso"), cv_res_tab)
+cv_res_tab
+```
+
+```{r, eval = FALSE, message = FALSE}
+# Predict on data sets
+# Ridge
+preds_ridge_train = as.numeric(
+  predict(fit_cv_enet, my_train_mat, type = "response", 
+          alpha = 0, lambda = cv_res_tab$Lambda[cv_res_tab$Alpha==0])
+)
+preds_ridge_test = as.numeric(
+  predict(fit_cv_enet, my_test_mat, type = "response", 
+          alpha = 0, lambda = cv_res_tab$Lambda[cv_res_tab$Alpha==0])
+)
+
+# Elastic-net
+enet_alpha = cv_res_tab$Alpha[cv_res_tab$Model == "Elastic-net"]
+preds_enet_train = as.numeric(
+  predict(fit_cv_enet, my_train_mat, type = "response", 
+          alpha = enet_alpha,
+          lambda = cv_res_tab$Lambda[cv_res_tab$Alpha==enet_alpha])
+)
+preds_enet_test = as.numeric(
+  predict(fit_cv_enet, my_test_mat, type = "response", 
+          alpha = enet_alpha, 
+          lambda = cv_res_tab$Lambda[cv_res_tab$Alpha==enet_alpha])
+)
+
+# Lasso
+preds_lasso_train = as.numeric(
+  predict(fit_cv_enet, my_train_mat, type = "response", 
+          alpha = 1, lambda = cv_res_tab$Lambda[cv_res_tab$Alpha==1])
+)
+preds_lasso_test = as.numeric(
+  predict(fit_cv_enet, my_test_mat, type = "response", 
+          alpha = 1, lambda = cv_res_tab$Lambda[cv_res_tab$Alpha==1])
+)
+
+save(fit_cv_enet, 
+     preds_ridge_train, preds_ridge_test, 
+     preds_enet_train, preds_enet_test, 
+     preds_lasso_train, preds_lasso_test, 
+     file = "glmnet.rData")
+```
+
+#### Survival random forests
+
+- Tuning parameters: minimum size of terminal node `nodesize` and number of variables to possibly split at each node `mtry`(other parameters include number of trees `ntree` and number of random splits `nsplit`)
+- Tuning method: built-in grid search using out-of-sample error
+- Solution expected to be approximately optimal. Increasing `sampsize` and/or `ntreeTry` should help? 
+
+```{r, eval = FALSE}
+# Setting doBest = TRUE returns a fitted random forest, but can't seem to use 
+# it to get predictions
+# 1 hour + 10 minutes to run (including refitting and predicting)
+set.seed(1)
+tune_rfsrc = randomForestSRC::tune(
+  Surv(SurvTime_by90d, Death_by90d) ~ ., 
+  data = my_train_df %>%
+    dplyr::select(all_of(my_vars)), 
+  sampsize = 0.3 * nrow(my_train_df), ntreeTry = 200)
+
+# Fit RandomForestSRC survival forest
+fit_rfsrc = rfsrc(Surv(SurvTime_by90d, Death_by90d) ~ ., 
+                  data = my_train_df %>%
+                    dplyr::select(all_of(my_vars)), 
+                  nodesize = tune_rfsrc$optimal["nodesize"], 
+                  mtry = tune_rfsrc$optimal["mtry"])
+
+# Predict on data sets
+preds_rfsrc_train = predict(fit_rfsrc)
+preds_rfsrc_test = predict(fit_rfsrc, 
+                           newdata = my_test_df %>%
+                             dplyr::select(all_of(my_vars)))
+
+# Save model and predictions
+save(tune_rfsrc, 
+     fit_rfsrc, 
+     preds_rfsrc_train, 
+     preds_rfsrc_test, 
+     file = "rfsrc.rData")
+```
+
+```{r, echo = FALSE}
+load("rfsrc.rData")
+```
+
+```{r}
+# Default parameters: nodesize 15, mtry = sqrt(9-2) = 2-3, ntree = 500, nsplit = 10
+tune_rfsrc$optimal
+```
+
+#### Gradient boosting models
+
+GBM
+
+- Tuning parameters: maximum depth of each tree `interaction.depth` and total number of trees `n.trees` (other parameters include minimum number of observations in the terminal nodes `n.minobsinnode` and learning rate `shrinkage`)
+- Tuning method: CV grid search (grid adapted from `caret` package default to include default paramterization)
+
+XGBoost-Linear
+
+- Tuning parameters (out of many): L2 regularization `lambda`, L1 regularization `alpha`, and total number of trees `nrounds`
+- Tuning method: CV grid search (grid adapted from `caret` package default to include default paramterization)
+    
+XGBoost-Tree
+
+- Tuning parameters (out of many): maximum tree depth `max_depth`, total number of trees `nrounds`, step size shrinkage `eta`, subsample ratio of columns when constructing each tree `colsample_bytree`, and subsample ratio of the training instances `subsample`
+- Tuning method: CV grid search (grid adapted from `caret` package default to include default paramterization)
+
+```{r, eval = FALSE}
+# Fit auto-tuners to training data
+# GBM
+# ~2 minutes
+# getModelInfo("gbm")[[1]]$grid # caret default grid
+gbm_at = auto_tuner(
+  learner = lrn("surv.gbm"), 
+  search_space = ps(
+    interaction.depth = p_int(lower = 1, upper = 3), # Default 1
+    n.trees = p_int(lower = 1*50, upper = 3*50) # Default 100
+  ),
+  resampling = rsmp("cv", folds = 10),
+  measure = msr("surv.cindex"), 
+  tuner = tnr("grid_search", resolution = 5))
+set_seed(100)
+gbm_at$train(task_train)
+
+# XGBoost-Linear
+# ~3 minutes
+# getModelInfo("xgbLinear")[[1]]$grid # caret default grid
+xgblinear_at = auto_tuner(
+  learner = lrn("surv.xgboost", booster = "gblinear"), 
+  search_space = ps(
+    lambda = p_dbl(lower = 0, upper = 10^-1), # Default 0
+    alpha = p_dbl(lower = 0, upper = 10^-1), # Default 0
+    nrounds = p_int(lower = 1*50, upper = 3*50) # No default
+  ),
+  resampling = rsmp("cv", folds = 10),
+  measure = msr("surv.cindex"), 
+  tuner = tnr("grid_search", resolution = 5))
+set_seed(100)
+xgblinear_at$train(task_train)
+
+# XGBoost-Tree
+# getModelInfo("xgbTree")[[1]]$grid # caret default grid
+# This takes a long time because there are so many hyperparmaeters
+# 6 hours + 40 minutes
+xgbtree_at = auto_tuner(
+  learner = lrn("surv.xgboost", booster = "gbtree"), 
+  search_space = ps(
+    max_depth = p_int(lower = 1, upper = 6), # Default 6
+    nrounds = p_int(lower = 1*50, upper = 3*50), # No default
+    eta = p_dbl(lower = 0.3, upper = 0.4), # Default 0.3
+    colsample_bytree =  p_dbl(lower = 0.6, upper = 1), # Default 1
+    subsample = p_dbl(lower = 0.5, upper = 1) # Default 1
+  ),
+  resampling = rsmp("cv", folds = 10),
+  measure = msr("surv.cindex"), 
+  tuner = tnr("grid_search", resolution = 5))
+set_seed(100)
+xgbtree_at$train(task_train)
+
+# List of auto-tuned models
+mods_boost_at = list(
+  "gbm" = gbm_at, 
+  "xgblinear" = xgblinear_at, 
+  "xgbtree" = xgbtree_at
+)
+
+# Re-fit tuned models (necessary to do it this way to get survival probabilities)
+set.seed(1)
+fit_boost = lapply(mods_boost_at, function(at) {
+  my_learn = ppl("crankcompositor", 
+                 ppl("distrcompositor", at$learner),
+                 response = TRUE, overwrite = FALSE, 
+                 method = "mean", graph_learner = TRUE)
+  my_learn$train(task_train)
+})
+names(fit_boost) = names(mods_boost_at)
+
+# Predict on data sets (linear predictor seems to discriminate better than 
+# 90-day survival probability)
+preds_boost_train = sapply(names(mods_boost_at), function(fun) {
+  # fit_boost[[fun]]$predict(task_train)$distr$survival(90)
+  fit_boost[[fun]]$predict(task_train)$lp
+})
+preds_boost_test = sapply(names(mods_boost_at), function(fun) {
+  # fit_boost[[fun]]$predict(task_test)$distr$survival(90)
+  fit_boost[[fun]]$predict(task_test)$lp
+})
+
+save(gbm_at, 
+     xgblinear_at, xgbtree_at, 
+     preds_boost_train, preds_boost_test, 
+     file = "boost_at.rData")
+```
+
+```{r, echo = FALSE}
+load("boost_at.rData")
+```
+
+```{r}
+gbm_at$tuning_result %>% 
+  dplyr::select(interaction.depth:n.trees, surv.cindex)
+xgblinear_at$tuning_result %>% 
+  dplyr::select(lambda:nrounds, surv.cindex)
+xgbtree_at$tuning_result %>% 
+  dplyr::select(max_depth:subsample, surv.cindex)
+```
+
+CoxBoost
+
+- Tuning parameters: penalty at each step `penalty` and number of boosting steps`stepno`
+- Tuning method: coarse line search to find the optimal penalty and CV to find the optimal number of boosting steps
+
+```{r, eval = FALSE}
+# Run CV to identify optimal penalty and number of boosting steps
+# ~11 hours 
+set.seed(1)
+fit_cv_coxboost = optimCoxBoostPenalty(
+  status = my_train_df$Death_by90d, 
+  time = my_train_df$SurvTime_by90d, 
+  x = model.matrix(Surv(SurvTime_by90d, Death_by90d) ~ ., 
+                         my_train_df %>% dplyr::select(all_of(my_vars)))[,-1], 
+  parallel = TRUE)
+
+# Re-fit optimal model
+if (fit_cv_coxboost$cv.res$optimal.step == 0) {
+  # If optimal steps = 0, use default model
+  fit_coxboost = CoxBoost(
+    status = my_train_df$Death_by90d, 
+    time = my_train_df$SurvTime_by90d, 
+    x = model.matrix(Surv(SurvTime_by90d, Death_by90d) ~ ., 
+                           my_train_df %>% dplyr::select(all_of(my_vars)))[,-1])
+} else {
+  fit_coxboost = CoxBoost(
+    status = my_train_df$Death_by90d, 
+    time = my_train_df$SurvTime_by90d, 
+    x = model.matrix(Surv(SurvTime_by90d, Death_by90d) ~ ., 
+                           my_train_df %>% dplyr::select(all_of(my_vars)))[,-1], 
+    stepno = fit_cv_coxboost$cv.res$optimal.step,
+    penalty = fit_cv_coxboost$penalty)
+}
+
+# Predict 90-day survival for data sets
+# For some reason, risk/CIF gets you all 1s and 0s
+preds_coxboost_train = as.numeric(predict(
+  fit_coxboost, 
+  newstatus = my_train_df$Death_by90d, 
+  newtime = my_train_df$SurvTime_by90d, 
+  newdata = model.matrix(Surv(SurvTime_by90d, Death_by90d) ~ ., 
+                         my_train_df %>% dplyr::select(all_of(my_vars)))[,-1], 
+  type = "CIF", times = 90))
+preds_coxboost_test = as.numeric(predict(
+  fit_coxboost, 
+  newstatus = my_test_df$Death_by90d, 
+  newtime = my_test_df$SurvTime_by90d, 
+  newdata = model.matrix(Surv(SurvTime_by90d, Death_by90d) ~ ., 
+                         my_test_df %>% dplyr::select(all_of(my_vars)))[,-1], 
+  type = "CIF", times = 90))
+
+save(fit_cv_coxboost, fit_coxboost, 
+     preds_coxboost_train, preds_coxboost_test, 
+     file = "coxboost.rData")
+```
+
+```{r, echo = FALSE}
+load("coxboost.rData")
+```
+
+```{r}
+c(penalty = fit_cv_coxboost$penalty, 
+  "number of steps" = fit_cv_coxboost$cv.res$optimal.step)
+```
+
+#### Neural networks (CoxTime, DeepHit, DeepSurv, logistic hazard, and PC hazard)
+
+- Tuning parameters (out of many): dropout rate `dropout`, weight decay `weight_decay`, learning rate `learning_rate`, and number of nodes `num_nodes` in a layer/number of layers
+- Tuning method: random search + additional CV to choose between "optimal" and default models
+
+```{r, eval = FALSE}
+# Set up search space
+search_space = ps(
+  dropout = p_dbl(lower = 0, upper = 1),
+  weight_decay = p_dbl(lower = 0, upper = 0.5),
+  learning_rate = p_dbl(lower = 0, upper = 1),
+  nodes = p_int(lower = 1, upper = 32),
+  k = p_int(lower = 1, upper = 4)
+)
+search_space$trafo <- function(x, param_set) {
+  x$num_nodes = rep(x$nodes, x$k)
+  x$nodes = x$k = NULL
+  return(x)
+}
+
+
+# Fit auto-tuners to training data
+# ~1 hour + 10 minutes collectively (including benchmarking), with large 
+# variation between models 
+# CoxTime 
+coxtime_at = auto_tuner(
+  learner = lrn("surv.coxtime", frac = 0.3, early_stopping = TRUE, 
+                epochs = 100, optimizer = "adam"), 
+  search_space = search_space,
+  resampling = rsmp("cv", folds = 3),
+  measure = msr("surv.cindex"), 
+  terminator = trm("evals", n_evals = 60),
+  tuner = tnr("random_search"))
+set_seed(1)
+coxtime_at$train(task_train)
+
+# DeepHit 
+deephit_at = auto_tuner(
+  learner = lrn("surv.deephit", frac = 0.3, early_stopping = TRUE, 
+                epochs = 100, optimizer = "adam"), 
+  search_space = search_space,
+  resampling = rsmp("cv", folds = 3),
+  measure = msr("surv.cindex"), 
+  terminator = trm("evals", n_evals = 60),
+  tuner = tnr("random_search"))
+set_seed(1)
+deephit_at$train(task_train)
+
+# DeepSurv 
+deepsurv_at = auto_tuner(
+  learner = lrn("surv.deepsurv", frac = 0.3, early_stopping = TRUE, 
+                epochs = 100, optimizer = "adam"), 
+  search_space = search_space,
+  resampling = rsmp("cv", folds = 3),
+  measure = msr("surv.cindex"), 
+  terminator = trm("evals", n_evals = 60),
+  tuner = tnr("random_search"))
+set_seed(2)
+deepsurv_at$train(task_train)
+
+# Logistic hazard 
+loghaz_at = auto_tuner(
+  learner = lrn("surv.loghaz", frac = 0.3, early_stopping = TRUE, 
+                epochs = 100, optimizer = "adam"), 
+  search_space = search_space,
+  resampling = rsmp("cv", folds = 3),
+  measure = msr("surv.cindex"), 
+  terminator = trm("evals", n_evals = 60),
+  tuner = tnr("random_search"))
+set_seed(1) 
+loghaz_at$train(task_train)
+
+# PC hazard 
+pchazard_at = auto_tuner(
+  learner = lrn("surv.pchazard", frac = 0.3, early_stopping = TRUE, 
+                epochs = 100, optimizer = "adam"), 
+  search_space = search_space,
+  resampling = rsmp("cv", folds = 3),
+  measure = msr("surv.cindex"), 
+  terminator = trm("evals", n_evals = 60),
+  tuner = tnr("random_search"))
+set_seed(1)
+pchazard_at$train(task_train)
+
+# Run CV benchmark to compare tuned and default models
+learners = list(
+  lrn("surv.coxtime", id = "surv.coxtime.default"), 
+  coxtime_at$learner, 
+  lrn("surv.deephit", id = "surv.deephit.default"),
+  deephit_at$learner, 
+  lrn("surv.deepsurv", id = "surv.deepsurv.default"),
+  deepsurv_at$learner, 
+  lrn("surv.loghaz", id = "surv.loghaz.default"),
+  loghaz_at$learner, 
+  lrn("surv.pchazard", id = "surv.pchazard.default"),
+  pchazard_at$learner
+)
+set.seed(1)
+design = benchmark_grid(task_train, learners, rsmp("cv", folds = 5))
+bm = benchmark(design)
+```
+
+```{r, echo = FALSE}
+load("nn_at.rData")
+```
+
+```{r}
+# List of auto-tuned models
+mods_at = list(
+  "coxtime" = coxtime_at, 
+  "deephit" = deephit_at, 
+  "deepsurv" = deepsurv_at, 
+  "loghaz" = loghaz_at, 
+  "pchazard" = pchazard_at
+)
+
+# Default parameters: dropout = 0.1, weight_decay = 0, learning_rate = 0.01, 
+# num_nodes = c(32, 32)
+# Tuned parameters
+sapply(mods_at, function(x) {
+  x$tuning_result %>% 
+  dplyr::select(dropout:k, surv.cindex)
+}) %>% t()
+
+# Summary of C-statistics for default and best tuned model
+bm_df = data.frame(
+  Model = rep(c("coxtime", "deephit", "deepsurv", "loghaz", "pchazard"), each = 2), 
+  Parameters = rep(c("default", "tuned"), times = 5), 
+  surv.cindex = bm$aggregate(msr("surv.cindex"))$surv.cindex
+) %>% 
+  rename("CV C-index" = surv.cindex) 
+```
+
+```{r, eval = FALSE}
+# pycox models to try
+pycox_mods = c(
+  # Based on the Cox PH with time-varying effects
+  "coxtime" = coxtime, 
+  # Based on the PMF of a discrete Cox model
+  "deephit" = deephit, 
+  # Based on the partial likelihood from a Cox PH
+  "deepsurv" = deepsurv, 
+  # Discrete neural networks based on a cross-entropy loss and predictions of a 
+  # discrete hazard function, also known as Nnet-Survival
+  # Logistic hazard
+  "loghaz" = loghaz, 
+  # PC hazard
+  "pchazard" = pchazard)
+
+# Re-fit the best of each pycox model (either default or tuned)
+set_seed(1)
+fit_pycox = lapply(names(pycox_mods), function(fun) {
+  param_spec = bm_df$Parameters[which.max(bm_df$`CV C-index`[bm_df$Model == fun])]
+  if (param_spec == "default") {
+    pycox_mods[[fun]](Surv(SurvTime_by90d, Death_by90d) ~ ., 
+                      data = my_train_df %>% 
+                        dplyr::select(all_of(my_vars)))
+  } else {
+    tune_res = mods_at[[fun]]$tuning_result
+    pycox_mods[[fun]](Surv(SurvTime_by90d, Death_by90d) ~ ., 
+                      data = my_train_df %>%
+                        dplyr::select(all_of(my_vars)), 
+                      dropout = tune_res$dropout, 
+                      num_nodes = rep(tune_res$nodes, tune_res$k), 
+                      weight_decay = tune_res$weight_decay, 
+                      learning_rate = tune_res$learning_rate, 
+                      frac = 0.3, early_stopping = TRUE, 
+                      epochs = 100, optimizer = "adam")
+  }
+})
+names(fit_pycox) = names(pycox_mods)
+
+# Predict on data sets (90-day survival probability)
+preds_pycox_train = sapply(names(pycox_mods), function(fun) {
+  predict(fit_pycox[[fun]], type = "survival")[,"90"]
+})
+preds_pycox_test = sapply(names(pycox_mods), function(fun) {
+  predict(fit_pycox[[fun]], 
+          newdata = my_test_df %>%
+            dplyr::select(all_of(my_vars)), 
+          type = "survival")[,"90"]
+})
+
+# Save model and predictions
+save(coxtime_at, deephit_at, deepsurv_at, loghaz_at, pchazard_at, 
+     bm, bm_df, fit_pycox, 
+     preds_pycox_train, preds_pycox_test, 
+     file = "nn_at.rData")
+```
+
+## Concordance
+
+Calculate the concordance for each model and dataset. 
+
+```{r}
+# Put all predictions together
+all_preds_train = data.frame(
+  meld3 = preds_MELD_train, 
+  ridge = preds_ridge_train, 
+  enet = preds_enet_train, 
+  lasso = preds_lasso_train, 
+  rfsrc = preds_rfsrc_train$predicted.oob, 
+  preds_boost_train, 
+  coxboost = preds_coxboost_train,
+  1 - preds_pycox_train
+  )
+all_preds_test = data.frame(
+  meld3 = preds_MELD_test, 
+  ridge = preds_ridge_test, 
+  enet = preds_enet_test, 
+  lasso = preds_lasso_test, 
+  rfsrc = preds_rfsrc_test$predicted, 
+  preds_boost_test, 
+  coxboost = preds_coxboost_test,
+  1 - preds_pycox_test
+  )
+
+# Concordance
+all_concordances = as.data.frame(cbind(
+  "Training" = sapply(names(all_preds_train), function(x) {
+    concordance(Surv(SurvTime_by90d, Death_by90d) ~ all_preds_train[,x], 
+                data = my_train_df, reverse = TRUE)$concordance
+  }), 
+  "Test" = sapply(names(all_preds_test), function(x) {
+    concordance(Surv(SurvTime_by90d, Death_by90d) ~ all_preds_test[,x], 
+                data = my_test_df, reverse = TRUE)$concordance
+  })
+))
+round(all_concordances, 5)
+```
+
+Test if the concordances are significantly different for MELD 3.0 and each machine learning model. 
+
+```{r, eval = FALSE}
+# Compare C-indices
+# 30 minutes
+all_concordance_pvals = as.data.frame(cbind(
+  "Training" = sapply(all_preds_train[,-1], function(x) {
+    compareC(my_train_df$SurvTime_by90d, my_train_df$Death_by90d, 
+             preds_MELD_train, x)$pval
+  }), 
+  "Test" = sapply(all_preds_test[,-1], function(x) {
+    compareC(my_test_df$SurvTime_by90d, my_test_df$Death_by90d, 
+             preds_MELD_test, x)$pval
+  })
+))
+save(all_concordances, all_concordance_pvals, file = "all_concordance_pvals.rData")
+```
+
+```{r, echo = FALSE}
+load("all_concordance_pvals.rData")
+```
+
+```{r}
+round(all_concordance_pvals, 5)
+```

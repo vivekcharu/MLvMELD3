@@ -1,0 +1,135 @@
+---
+title: "Tables 1-2"
+output: html_document
+date: "2024-09-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+library(tidyverse)
+library(kableExtra)
+library(gtsummary)
+
+# Set background to be white for all ggplots
+theme_set(theme_classic())
+```
+
+Read in the training and test data. 
+
+```{r}
+dir = "/Users/jliang/Library/CloudStorage/Box-Box/MELD\ QSU/data/"
+train_df = read.csv(paste0(dir, "MELD3_Dev_Cohort.csv"))
+test_df = read.csv("/Users/jliang/Library/CloudStorage/Box-Box/STAR_files_as_of_4_5_2024/MELD\ 3.0/MELD3_SecVal_Cohort_2019_23.csv")
+```
+
+## Table 1
+
+Median (IQR) reported for continuous variables and count (percent) for binary/categorical variables. 
+
+```{r}
+# Stack all data and pull out variables of interest
+tab1_df = rbind(
+  train_df %>% dplyr::select(-DGN_OSTXT_TCR,-DGN2_OSTXT_TCR) %>% mutate(Data = "Training"), 
+  test_df %>% 
+    # 1/1/2021 (inclusive) to end of available data
+    filter(mdy(INIT_DATE) >= as.Date("2021-01-01")) %>% 
+    mutate(Data = "Test") 
+) %>% 
+  mutate(
+    Data = factor(Data, levels = c("Training", "Test")), 
+    Female = ifelse(GENDER == "F", 1, 0), 
+    dialysis = ifelse(INIT_DIALYSIS_PRIOR_WEEK == "Y", 1, 0), 
+    ethnicity_cat = fct_relabel(factor(Ethnicity_Cat), 
+                                ~str_sub(., start = 3)), 
+    enceph = fct_recode(factor(INIT_ENCEPH), 
+                        None = "1", "1-2" = "2", "3-4" = "3"), 
+    dgn = factor(case_when(
+      DGN_TCR %in% as.character(c(4100:4107, 4201:4207, 4216)) ~ 
+        "Viral hepatitis", 
+      DGN_TCR %in% as.character(c(4215, 4217:4219)) ~ 
+        "Alcohol associated liver disease", 
+      DGN_TCR %in% "4214" ~ "NASH", 
+      DGN_TCR %in% as.character(c(4220, 4230, 4231, 4235, 4240:4242, 4245, 
+                                  4250, 4255, 4260, 4264, 4270:4272, 4275)) ~ 
+        "Cholestatic", 
+      TRUE ~ "Other"), 
+      levels = c("Alcohol associated liver disease", "Cholestatic", "NASH", 
+                 "Viral hepatitis", "Other"))) %>% 
+  dplyr::select(Data, 
+                "Age" = INIT_AGE, 
+                Female, 
+                "Race/ethnicity" = ethnicity_cat, 
+                "Primary diagnosis" = dgn, 
+                Bilirubin = INIT_BILIRUBIN, 
+                "Serum sodium" = INIT_SERUM_SODIUM, 
+                INR = INIT_INR, 
+                "Serum creatinine" = INIT_SERUM_CREAT, 
+                "Albumin" = INIT_ALBUMIN, 
+                "Dialysis" = dialysis,
+                "Ascites" = ASCITES_BL, 
+                "Encephalopathy" = enceph, 
+                "Dead at 90 days" = Death_by90d)
+
+# Create Table 1
+tab1_gt = tab1_df %>% 
+  tbl_summary(by = Data) %>%
+  modify_footnote(everything() ~ NA)
+
+as_gt(tab1_gt) %>% gt::gtsave(filename = "tab1.docx")
+tab1_gt
+```
+
+## Table 2
+
+We define the models/hypothesis tests run for each analysis and dataset as a family. Each family has a total of 13 tests, so the Bonferroni threshold is 0.05/13 = 0.00385.  
+
+- Analysis 1: with biologically relevant transformations (closest to MELD 3.0)
+- Analysis 2: no variable caps
+- Analysis 3: no variable caps + additional clinical variables
+
+```{r}
+# Initialize lists for C-statistics and p-values
+all_concordances_list = list()
+all_concordance_pvals_list = list()
+# Sub-directories to search for results
+my_subdirs = c("analysis1", "analysis2", "analysis3")
+
+# Load C-statistics and p-values from all analyses
+for (i in 1:length(my_subdirs)) {
+  load(paste0(my_subdirs[i], "/all_concordance_pvals.rData"))
+  all_concordances_list[[i]] = all_concordances
+  all_concordance_pvals_list[[i]] = all_concordance_pvals
+}
+
+# Put all C-statistics and p-values together
+tab2_df = data.frame(
+  Model = c("MELD 3.0", "Ridge", "Elastic-net", "Lasso", 
+            "Random forest", "GBM", 
+            "XGBoost-Linear", "XGBoost-Tree", "CoxBoost", 
+            "Cox-Time", "DeepHit", "DeepSurv", "Logistic-Hazard", "PC-Hazard"), 
+  cbind(cbind(all_concordances_list[[1]][,"Test"], 
+              c(meld3 = NA, all_concordance_pvals_list[[1]][,"Test"])), 
+        cbind(all_concordances_list[[2]][, "Test"], 
+              c(meld3 = NA, all_concordance_pvals_list[[2]][,"Test"])), 
+        cbind(all_concordances_list[[3]][,"Test"], 
+              c(meld3 = NA, all_concordance_pvals_list[[3]][,"Test"])))
+) %>% 
+  # Round to 3rd decimal place and replace those <0.001 with "<0.001"
+  mutate_if(is.numeric, ~as.character(replace_na(
+    ifelse(. < 0.001, "<0.001", round(., 3)), "Reference"))) %>% 
+  `rownames<-`( NULL )
+# Nice names
+tab2_df = rbind(
+  c("", rep(c("C-statistic", "p-value"), length(my_subdirs))), 
+  tab2_df
+)
+names(tab2_df) = c("Model", "Analysis 1", "", 
+                   "Analysis 2", "", "Analysis 3", "")
+
+write.csv(tab2_df, file = "tab2.csv", row.names = FALSE)
+kbl(tab2_df) %>% # Align columns right
+  # This table style puts horizontal lines at the top and bottom
+  kable_classic(html_font = "\"Source Sans Pro\", helvetica, sans-serif") %>% 
+  # Bold headers
+  row_spec(0:1, bold = TRUE)
+```
