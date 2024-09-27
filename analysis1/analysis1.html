@@ -10,9 +10,8 @@
 
 
 
-<meta name="date" content="2024-09-05" />
 
-<title>Analysis 1: with biologically relevant transformations</title>
+<title>Analysis 1: MELD 3.0 variables only</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -349,9 +348,7 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Analysis 1: with biologically relevant
-transformations</h1>
-<h4 class="date">2024-09-05</h4>
+<h1 class="title toc-ignore">Analysis 1: MELD 3.0 variables only</h1>
 
 </div>
 
@@ -373,12 +370,12 @@ my_factor_vars = list(
   &quot;ASCITES_BL&quot; = c(&quot;ASCITES_BLModerate&quot;, &quot;ASCITES_BLSlight&quot;), 
   &quot;INIT_ENCEPH&quot; = c(&quot;INIT_ENCEPH2&quot;, &quot;INIT_ENCEPH3&quot;)
 )
-my_vars = c(&quot;INIT_BILIRUBIN&quot;, &quot;log_BILIRUBIN&quot;, 
-            &quot;cap_SERUM_SODIUM&quot;, &quot;log_cap_SERUM_SODIUM&quot;, 
-            &quot;INIT_INR&quot;, &quot;log_INR&quot;, 
-            &quot;INIT_SERUM_CREAT&quot;, &quot;log_SERUM_CREAT&quot;, 
-            &quot;cap_ALBUMIN&quot;, &quot;log_cap_ALBUMIN&quot;, 
-            &quot;FEMALE&quot;, &quot;DIALYSIS&quot;, 
+my_vars = c(&quot;MELD_BILIRUBIN&quot;, &quot;log_MELD_BILIRUBIN&quot;, 
+            &quot;MELD_SERUM_SODIUM&quot;, &quot;log_MELD_SERUM_SODIUM&quot;, 
+            &quot;MELD_INR&quot;, &quot;log_MELD_INR&quot;, 
+            &quot;MELD_SERUM_CREAT&quot;, &quot;log_MELD_SERUM_CREAT&quot;,
+            &quot;MELD_ALBUMIN&quot;, &quot;log_MELD_ALBUMIN&quot;, 
+            &quot;FEMALE&quot;, 
             &quot;SurvTime_by90d&quot;, &quot;Death_by90d&quot;)
 
 my_train_df = train_df %&gt;% 
@@ -402,6 +399,9 @@ my_train_df = train_df %&gt;%
     cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM &gt; 137, 137, 
                               ifelse(INIT_SERUM_SODIUM &lt; 125, 125, 
                                      INIT_SERUM_SODIUM)), 
+    log_MELD_SERUM_SODIUM = log(ifelse(INIT_SERUM_SODIUM &gt; 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM &lt; 125, 125, 
+                                            INIT_SERUM_SODIUM))), 
     log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
     log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
     # INR
@@ -417,6 +417,8 @@ my_train_df = train_df %&gt;%
     MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, 
                                 ifelse(INIT_ALBUMIN &lt; 1.5, 1.5, INIT_ALBUMIN)), 
     cap_ALBUMIN = ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, INIT_ALBUMIN), 
+    log_MELD_ALBUMIN = log(ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN &lt; 1.5, 1.5, INIT_ALBUMIN))), 
     log_cap_ALBUMIN = log(cap_ALBUMIN), 
     log_ALBUMIN = log(INIT_ALBUMIN))
 
@@ -443,6 +445,9 @@ my_test_df = test_df %&gt;%
     cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM &gt; 137, 137, 
                               ifelse(INIT_SERUM_SODIUM &lt; 125, 125, 
                                      INIT_SERUM_SODIUM)), 
+    log_MELD_SERUM_SODIUM = log(ifelse(INIT_SERUM_SODIUM &gt; 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM &lt; 125, 125, 
+                                            INIT_SERUM_SODIUM))), 
     log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
     log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
     # INR
@@ -458,6 +463,8 @@ my_test_df = test_df %&gt;%
     MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, 
                                 ifelse(INIT_ALBUMIN &lt; 1.5, 1.5, INIT_ALBUMIN)), 
     cap_ALBUMIN = ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, INIT_ALBUMIN), 
+    log_MELD_ALBUMIN = log(ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN &lt; 1.5, 1.5, INIT_ALBUMIN))), 
     log_cap_ALBUMIN = log(cap_ALBUMIN), 
     log_ALBUMIN = log(INIT_ALBUMIN))
 
@@ -512,16 +519,14 @@ preds_MELD_test = my_test_df %&gt;%
 <div id="machine-learning" class="section level3">
 <h3>Machine learning</h3>
 <p>For all machine learning models, we will include the following
-covariates:</p>
+covariates, capped as they are form MELD 3.0:</p>
 <ol style="list-style-type: decimal">
 <li>Sex</li>
 <li>Bilirubin and log(bilirubin)</li>
-<li>Capped sodium (truncated between 125 and 137) and log(capped
-sodium)</li>
+<li>Sodium and log(sodium)</li>
 <li>INR and log(INR)</li>
 <li>Creatinine and log(creatinine)</li>
-<li>Dialysis</li>
-<li>Capped albumin (truncated above at 3.5) and log(capped albumin)</li>
+<li>Albumin and log(albumin)</li>
 </ol>
 <div id="regularized-cox-ph-models-lasso-ridge-and-elastic-net" class="section level4">
 <h4>Regularized Cox PH models (lasso, ridge, and elastic-net)</h4>
@@ -535,7 +540,7 @@ default partial likelihood as CV loss)</li>
 <li>Currently using 1 SE instead of minimum lambda</li>
 </ul>
 <pre class="r"><code># Set up model matrices with all 2-way interactions
-# Results in 73 predictors
+# Results in 61 predictors
 
 my_train_mat = data.frame(
   my_train_df %&gt;% 
@@ -545,11 +550,11 @@ my_train_mat = data.frame(
 ) %&gt;% 
   # Exclude the garbage interactions
   dplyr::select(-c(X.Intercept., 
-                   INIT_BILIRUBIN.log_BILIRUBIN, 
-                   cap_SERUM_SODIUM.log_cap_SERUM_SODIUM, 
-                   INIT_INR.log_INR, 
-                   INIT_SERUM_CREAT.log_SERUM_CREAT, 
-                   cap_ALBUMIN.log_cap_ALBUMIN))
+                   MELD_BILIRUBIN.log_MELD_BILIRUBIN, 
+                   MELD_SERUM_SODIUM.log_MELD_SERUM_SODIUM, 
+                   MELD_INR.log_MELD_INR, 
+                   MELD_SERUM_CREAT.log_MELD_SERUM_CREAT, 
+                   MELD_ALBUMIN.log_MELD_ALBUMIN))
 
 my_test_mat = data.frame(
   my_test_df %&gt;% 
@@ -559,18 +564,18 @@ my_test_mat = data.frame(
 ) %&gt;% 
   # Exclude the garbage interactions
   dplyr::select(-c(X.Intercept., 
-                   INIT_BILIRUBIN.log_BILIRUBIN, 
-                   cap_SERUM_SODIUM.log_cap_SERUM_SODIUM, 
-                   INIT_INR.log_INR, 
-                   INIT_SERUM_CREAT.log_SERUM_CREAT, 
-                   cap_ALBUMIN.log_cap_ALBUMIN))</code></pre>
+                   MELD_BILIRUBIN.log_MELD_BILIRUBIN, 
+                   MELD_SERUM_SODIUM.log_MELD_SERUM_SODIUM, 
+                   MELD_INR.log_MELD_INR, 
+                   MELD_SERUM_CREAT.log_MELD_SERUM_CREAT, 
+                   MELD_ALBUMIN.log_MELD_ALBUMIN))</code></pre>
 <pre class="r"><code># CV to find optimal lambda and alpha parameters for regularized Cox PH models
-# ~15 minutes
-set.seed(1)
+# ~10 minutes
+set.seed(10)
 fit_cv_enet = 
   cva.glmnet(Surv(SurvTime_by90d, Death_by90d) ~ ., 
              data = my_train_mat %&gt;% filter(SurvTime_by90d &gt; 0), 
-             family = &quot;cox&quot;, type.measure = &quot;C&quot;)</code></pre>
+             family = &quot;cox&quot;)</code></pre>
 <pre class="r"><code># Organize CV results
 cv_res_tab = do.call(
   rbind, 
@@ -580,101 +585,101 @@ cv_res_tab = do.call(
     })
 )</code></pre>
 <pre><code>## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
 ## 
-## Measure: C-index 
+## Measure: Partial Likelihood Deviance 
 ## 
-##      Lambda Index Measure       SE Nonzero
-## min 0.00595   100  0.8637 0.004331      73
-## 1se 0.16951    64  0.8596 0.004173      73
+##      Lambda Index Measure      SE Nonzero
+## min 0.00634   100   11.35 0.08001      61
+## 1se 0.03715    81   11.43 0.07475      61
 ## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
 ## 
-## Measure: C-index 
+## Measure: Partial Likelihood Deviance 
 ## 
-##      Lambda Index Measure       SE Nonzero
-## min 0.00595   100  0.8637 0.004336      73
-## 1se 0.16951    64  0.8595 0.004175      72
+##      Lambda Index Measure      SE Nonzero
+## min 0.00634   100   11.35 0.08004      61
+## 1se 0.03715    81   11.43 0.07462      60
 ## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
 ## 
-## Measure: C-index 
-## 
-##      Lambda Index Measure       SE Nonzero
-## min 0.00478    80  0.8637 0.004339      71
-## 1se 0.13621    44  0.8595 0.004226      63
-## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
-## 
-## Measure: C-index 
-## 
-##      Lambda Index Measure       SE Nonzero
-## min 0.00394    69  0.8637 0.004359      64
-## 1se 0.08495    36  0.8594 0.004328      60
-## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
-## 
-## Measure: C-index 
-## 
-##      Lambda Index Measure       SE Nonzero
-## min 0.00422    59  0.8637 0.004384      59
-## 1se 0.04738    33  0.8594 0.004377      54
-## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
-## 
-## Measure: C-index 
-## 
-##       Lambda Index Measure       SE Nonzero
-## min 0.003133    55  0.8637 0.004405      54
-## 1se 0.026621    32  0.8597 0.004426      48
-## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
-## 
-## Measure: C-index 
-## 
-##       Lambda Index Measure       SE Nonzero
-## min 0.002184    53  0.8636 0.004421      51
-## 1se 0.016908    31  0.8595 0.004494      41
-## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
-## 
-## Measure: C-index 
+## Measure: Partial Likelihood Deviance 
 ## 
 ##       Lambda Index Measure      SE Nonzero
-## min 0.001253    54  0.8636 0.00442      49
-## 1se 0.010647    31  0.8596 0.00455      37
+## min 0.000793   100   11.32 0.08123      61
+## 1se 0.020577    65   11.40 0.07698      54
 ## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
 ## 
-## Measure: C-index 
+## Measure: Partial Likelihood Deviance 
 ## 
-##       Lambda Index Measure       SE Nonzero
-## min 0.000765    55  0.8636 0.004404      41
-## 1se 0.007133    31  0.8596 0.004645      33
+##       Lambda Index Measure      SE Nonzero
+## min 0.000341    96   11.32 0.08146      60
+## 1se 0.016965    54   11.40 0.07677      49
 ## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
 ## 
-## Measure: C-index 
+## Measure: Partial Likelihood Deviance 
 ## 
-##      Lambda Index Measure       SE Nonzero
-## min 0.00059    54  0.8635 0.004414      38
-## 1se 0.00501    31  0.8594 0.004712      31
+##      Lambda Index Measure      SE Nonzero
+## min 0.00040    85   11.32 0.08130      60
+## 1se 0.01373    47   11.40 0.07631      44
 ## 
-## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      type.measure = &quot;C&quot;, nfolds = nfolds, foldid = foldid, alpha = a,      family = &quot;cox&quot;) 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
 ## 
-## Measure: C-index 
+## Measure: Partial Likelihood Deviance 
 ## 
-##       Lambda Index Measure       SE Nonzero
-## min 0.000624    50  0.8635 0.004499      28
-## 1se 0.003652    31  0.8594 0.004708      18</code></pre>
+##       Lambda Index Measure      SE Nonzero
+## min 0.000393    78   11.32 0.08123      57
+## 1se 0.010197    43   11.40 0.07585      37
+## 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
+## 
+## Measure: Partial Likelihood Deviance 
+## 
+##       Lambda Index Measure      SE Nonzero
+## min 0.000330    74   11.32 0.08111      51
+## 1se 0.007801    40   11.40 0.07529      31
+## 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
+## 
+## Measure: Partial Likelihood Deviance 
+## 
+##       Lambda Index Measure      SE Nonzero
+## min 0.000480    65   11.32 0.08108      41
+## 1se 0.005917    38   11.40 0.07499      27
+## 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
+## 
+## Measure: Partial Likelihood Deviance 
+## 
+##       Lambda Index Measure      SE Nonzero
+## min 0.000387    63   11.32 0.08122      38
+## 1se 0.004350    37   11.40 0.07537      22
+## 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
+## 
+## Measure: Partial Likelihood Deviance 
+## 
+##       Lambda Index Measure      SE Nonzero
+## min 0.000299    62   11.32 0.08121      37
+## 1se 0.003353    36   11.40 0.07578      19
+## 
+## Call:  glmnet::cv.glmnet(x = x, y = y, weights = ..1, offset = ..2,      nfolds = nfolds, foldid = foldid, alpha = a, family = &quot;cox&quot;) 
+## 
+## Measure: Partial Likelihood Deviance 
+## 
+##        Lambda Index Measure      SE Nonzero
+## min 0.0002176    62   11.32 0.08143      33
+## 1se 0.0024445    36   11.40 0.07605      16</code></pre>
 <pre class="r"><code>rownames(cv_res_tab) = NULL
 cv_res_tab = cv_res_tab[c(1, which.max(cv_res_tab$Measure), nrow(cv_res_tab)),] 
 cv_res_tab = data.frame(Model = c(&quot;Ridge&quot;, &quot;Elastic-net&quot;, &quot;Lasso&quot;), cv_res_tab)
 cv_res_tab</code></pre>
-<pre><code>##          Model Alpha      Lambda Index   Measure          SE Nonzero
-## 1        Ridge 0.000 0.169513408    64 0.8595772 0.004172754      73
-## 6  Elastic-net 0.125 0.026620937    32 0.8596560 0.004426237      48
-## 11       Lasso 1.000 0.003652056    31 0.8594135 0.004708042      18</code></pre>
+<pre><code>##          Model Alpha      Lambda Index  Measure         SE Nonzero
+## 1        Ridge 0.000 0.037154967    81 11.43102 0.07475112      61
+## 2  Elastic-net 0.001 0.037154967    81 11.43194 0.07462194      60
+## 11       Lasso 1.000 0.002444549    36 11.39878 0.07605068      16</code></pre>
 <pre class="r"><code># Predict on data sets
 # Ridge
 preds_ridge_train = as.numeric(
@@ -758,7 +763,7 @@ save(tune_rfsrc,
 <pre class="r"><code># Default parameters: nodesize 15, mtry = sqrt(9-2) = 2-3, ntree = 500, nsplit = 10
 tune_rfsrc$optimal</code></pre>
 <pre><code>## nodesize     mtry 
-##       35        2</code></pre>
+##       85        2</code></pre>
 </div>
 <div id="gradient-boosting-models" class="section level4">
 <h4>Gradient boosting models</h4>
@@ -792,7 +797,7 @@ package default to include default paramterization)</li>
 </ul>
 <pre class="r"><code># Fit auto-tuners to training data
 # GBM
-# ~2 minutes
+# ~2 minute
 # getModelInfo(&quot;gbm&quot;)[[1]]$grid # caret default grid
 gbm_at = auto_tuner(
   learner = lrn(&quot;surv.gbm&quot;), 
@@ -825,7 +830,7 @@ xgblinear_at$train(task_train)
 # XGBoost-Tree
 # getModelInfo(&quot;xgbTree&quot;)[[1]]$grid # caret default grid
 # This takes a long time because there are so many hyperparmaeters
-# 6.5 hours
+# 6 hours + 40 minutes
 xgbtree_at = auto_tuner(
   learner = lrn(&quot;surv.xgboost&quot;, booster = &quot;gbtree&quot;), 
   search_space = ps(
@@ -877,15 +882,15 @@ save(gbm_at,
 <pre class="r"><code>gbm_at$tuning_result %&gt;% 
   dplyr::select(interaction.depth:n.trees, surv.cindex)</code></pre>
 <pre><code>##    interaction.depth n.trees surv.cindex
-## 1:                 3     150   0.8637398</code></pre>
+## 1:                 3     150    0.864927</code></pre>
 <pre class="r"><code>xgblinear_at$tuning_result %&gt;% 
   dplyr::select(lambda:nrounds, surv.cindex)</code></pre>
 <pre><code>##    lambda alpha nrounds surv.cindex
-## 1:      0     0      50   0.8515255</code></pre>
+## 1:      0     0      50   0.8649942</code></pre>
 <pre class="r"><code>xgbtree_at$tuning_result %&gt;% 
   dplyr::select(max_depth:subsample, surv.cindex)</code></pre>
-<pre><code>##    max_depth nrounds eta colsample_bytree subsample surv.cindex
-## 1:         2     150 0.3                1     0.875    0.863407</code></pre>
+<pre><code>##    max_depth nrounds   eta colsample_bytree subsample surv.cindex
+## 1:         2      75 0.325              0.9     0.625    0.864248</code></pre>
 <p>CoxBoost</p>
 <ul>
 <li>Tuning parameters: penalty at each step <code>penalty</code> and
@@ -894,7 +899,7 @@ number of boosting steps<code>stepno</code></li>
 to find the optimal number of boosting steps</li>
 </ul>
 <pre class="r"><code># Run CV to identify optimal penalty and number of boosting steps
-# ~11 hours 
+# 10 hours + 40 minnutes
 set.seed(1)
 fit_cv_coxboost = optimCoxBoostPenalty(
   status = my_train_df$Death_by90d, 
@@ -973,7 +978,7 @@ search_space$trafo &lt;- function(x, param_set) {
 
 
 # Fit auto-tuners to training data
-# ~1 hour + 10 minutes collectively (including benchmarking), with large 
+# ~1 hour + 20 minutes collectively (including benchmarking), with large 
 # variation between models 
 # CoxTime 
 coxtime_at = auto_tuner(
@@ -1008,7 +1013,7 @@ deepsurv_at = auto_tuner(
   measure = msr(&quot;surv.cindex&quot;), 
   terminator = trm(&quot;evals&quot;, n_evals = 60),
   tuner = tnr(&quot;random_search&quot;))
-set_seed(1)
+set_seed(2)
 deepsurv_at$train(task_train)
 
 # Logistic hazard 
@@ -1020,7 +1025,7 @@ loghaz_at = auto_tuner(
   measure = msr(&quot;surv.cindex&quot;), 
   terminator = trm(&quot;evals&quot;, n_evals = 60),
   tuner = tnr(&quot;random_search&quot;))
-set_seed(3) 
+set_seed(1) 
 loghaz_at$train(task_train)
 
 # PC hazard 
@@ -1067,12 +1072,12 @@ sapply(mods_at, function(x) {
   x$tuning_result %&gt;% 
   dplyr::select(dropout:k, surv.cindex)
 }) %&gt;% t()</code></pre>
-<pre><code>##          dropout    weight_decay learning_rate nodes k surv.cindex
-## coxtime  0.2322143  0.04076144   0.05862994    20    1 0.8363819  
-## deephit  0.2832355  0.01485382   0.2107557     20    2 0.8090543  
-## deepsurv 0.7079103  0.06934256   0.6128226     1     4 0.8591799  
-## loghaz   0.05449783 0.04205636   0.01939522    16    1 0.8284853  
-## pchazard 0.2322143  0.04076144   0.05862994    20    1 0.824591</code></pre>
+<pre><code>##          dropout   weight_decay learning_rate nodes k surv.cindex
+## coxtime  0.2322143 0.04076144   0.05862994    20    1 0.8545925  
+## deephit  0.2832355 0.01485382   0.2107557     20    2 0.8035808  
+## deepsurv 0.3645992 0.3409012    0.1933366     7     2 0.867739   
+## loghaz   0.2322143 0.04076144   0.05862994    20    1 0.8362627  
+## pchazard 0.2832355 0.01485382   0.2107557     20    2 0.8347999</code></pre>
 <pre class="r"><code># Summary of C-statistics for default and best tuned model
 bm_df = data.frame(
   Model = rep(c(&quot;coxtime&quot;, &quot;deephit&quot;, &quot;deepsurv&quot;, &quot;loghaz&quot;, &quot;pchazard&quot;), each = 2), 
@@ -1176,19 +1181,19 @@ all_concordances = as.data.frame(cbind(
 round(all_concordances, 5)</code></pre>
 <pre><code>##           Training    Test
 ## meld3      0.86681 0.87144
-## ridge      0.86052 0.86443
-## enet       0.86111 0.86573
-## lasso      0.86135 0.86790
-## rfsrc      0.86416 0.87343
-## gbm        0.87376 0.87067
-## xgblinear  0.85124 0.85618
-## xgbtree    0.88634 0.86970
-## coxboost   0.85578 0.85923
-## coxtime    0.84754 0.84683
-## deephit    0.83984 0.84316
-## deepsurv   0.86092 0.86111
-## loghaz     0.81901 0.81692
-## pchazard   0.82404 0.82442</code></pre>
+## ridge      0.86654 0.87198
+## enet       0.86652 0.87196
+## lasso      0.86384 0.87011
+## rfsrc      0.86453 0.87261
+## gbm        0.87372 0.87034
+## xgblinear  0.86452 0.87024
+## xgbtree    0.87783 0.86887
+## coxboost   0.86420 0.87046
+## coxtime    0.85553 0.85585
+## deephit    0.85208 0.85578
+## deepsurv   0.83967 0.84083
+## loghaz     0.85406 0.86004
+## pchazard   0.81485 0.81264</code></pre>
 <p>Test if the concordances are significantly different for MELD 3.0 and
 each machine learning model.</p>
 <pre class="r"><code># Compare C-indices
@@ -1206,18 +1211,18 @@ all_concordance_pvals = as.data.frame(cbind(
 save(all_concordances, all_concordance_pvals, file = &quot;all_concordance_pvals.rData&quot;)</code></pre>
 <pre class="r"><code>round(all_concordance_pvals, 5)</code></pre>
 <pre><code>##           Training    Test
-## ridge      0.00003 0.00000
-## enet       0.00004 0.00001
-## lasso      0.00007 0.00323
-## rfsrc      0.19402 0.26412
-## gbm        0.00000 0.53943
-## xgblinear  0.00000 0.00000
-## xgbtree    0.00000 0.28052
-## coxboost   0.00000 0.00000
+## ridge      0.61510 0.21806
+## enet       0.59595 0.23178
+## lasso      0.00121 0.05100
+## rfsrc      0.24054 0.46919
+## gbm        0.00000 0.35452
+## xgblinear  0.00378 0.07223
+## xgbtree    0.00000 0.06247
+## coxboost   0.00616 0.19707
 ## coxtime    0.00000 0.00000
 ## deephit    0.00000 0.00000
-## deepsurv   0.00402 0.00000
-## loghaz     0.00000 0.00000
+## deepsurv   0.00000 0.00000
+## loghaz     0.00001 0.00000
 ## pchazard   0.00000 0.00000</code></pre>
 </div>
 

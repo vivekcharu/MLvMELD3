@@ -1,7 +1,6 @@
 ---
 title: "Tables 1-2"
 output: html_document
-date: "2024-09-05"
 ---
 
 ```{r setup, include=FALSE}
@@ -9,6 +8,9 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 library(tidyverse)
 library(kableExtra)
 library(gtsummary)
+
+library(survival)
+library(compareC)
 
 # Set background to be white for all ggplots
 theme_set(theme_classic())
@@ -83,7 +85,7 @@ tab1_gt
 
 We define the models/hypothesis tests run for each analysis and dataset as a family. Each family has a total of 13 tests, so the Bonferroni threshold is 0.05/13 = 0.00385.  
 
-- Analysis 1: with biologically relevant transformations (closest to MELD 3.0)
+- Analysis 1: MELD 3.0 variables only
 - Analysis 2: no variable caps
 - Analysis 3: no variable caps + additional clinical variables
 
@@ -132,4 +134,73 @@ kbl(tab2_df) %>% # Align columns right
   kable_classic(html_font = "\"Source Sans Pro\", helvetica, sans-serif") %>% 
   # Bold headers
   row_spec(0:1, bold = TRUE)
+```
+
+p-value comparing C-statistics for MELD 3.0 and MELD-Na in test set. 
+
+```{r}
+# Calculate MELD 3.0 and Meld-Na in test set
+my_test_df = test_df %>% 
+  # 1/1/2021 (inclusive) to end of available data
+  filter(mdy(INIT_DATE) >= as.Date("2021-01-01")) %>% 
+  mutate(
+    # Set lower/upper bounds for MELD variables and log transform
+    FEMALE = ifelse(GENDER == "F", 1, 0), 
+    MELD_BILIRUBIN = ifelse(INIT_BILIRUBIN < 1, 1, INIT_BILIRUBIN), 
+    MELD_SERUM_SODIUM = 137 - ifelse(INIT_SERUM_SODIUM > 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM < 125, 125, 
+                                            INIT_SERUM_SODIUM)), 
+    MELD_INR = ifelse(INIT_INR < 1, 1, INIT_INR), 
+    MELD_SERUM_CREAT_1 = ifelse(INIT_SERUM_CREAT > 4 | 
+                                  INIT_DIALYSIS_PRIOR_WEEK == "Y", 4, 
+                              ifelse(INIT_SERUM_CREAT < 1, 1, 
+                                     INIT_SERUM_CREAT)), 
+    MELD_SERUM_CREAT = ifelse(INIT_SERUM_CREAT > 3 | 
+                                INIT_DIALYSIS_PRIOR_WEEK == "Y", 3, 
+                              ifelse(INIT_SERUM_CREAT < 1, 1, 
+                                     INIT_SERUM_CREAT)), 
+    MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN > 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN < 1.5, 1.5, 
+                                       INIT_ALBUMIN)), 
+    # Calculate MELD-Na and MELD 3.0
+    MELD = 9.57 * log(MELD_SERUM_CREAT_1) + 3.78 * log(MELD_BILIRUBIN) + 
+      11.20 * log(MELD_INR) + 6.43, 
+    MELD_Na = round(MELD + 1.32 * MELD_SERUM_SODIUM - 
+                      (0.033 * MELD * MELD_SERUM_SODIUM)), 
+    MELD3 = round(1.33 * FEMALE + 
+                    4.56 * log(MELD_BILIRUBIN) + 0.82 * MELD_SERUM_SODIUM - 
+                    0.24 * MELD_SERUM_SODIUM * log(MELD_BILIRUBIN) + 
+                    9.09 * log(MELD_INR) + 
+                    11.14 * log(MELD_SERUM_CREAT) + 1.85 * MELD_ALBUMIN - 
+                    1.83 * MELD_ALBUMIN * log(MELD_SERUM_CREAT) + 6))
+```
+
+```{r, eval = FALSE}
+# p-value comparing C-statistics for MELD 3.0 and MELD-Na
+compare_C_MELD3_Na = 
+  compareC(my_test_df$SurvTime_by90d, my_test_df$Death_by90d, 
+           my_test_df$MELD3, my_test_df$MELD_Na)
+save(compare_C_MELD3_Na, file = "compare_C_MELD3_Na.rData")
+```
+
+```{r, echo = FALSE}
+load("compare_C_MELD3_Na.rData")
+```
+
+```{r}
+cbind(
+  sapply(c("MELD 3.0" = "MELD3", "MELD-Na" = "MELD_Na"), function(x) {
+    concordance(Surv(SurvTime_by90d, Death_by90d) ~ my_test_df[,x], 
+                data = my_test_df, reverse = TRUE)$concordance
+  }) %>% t(), 
+  "p-value" = compare_C_MELD3_Na$pval
+) %>% 
+  as.data.frame() %>% 
+  mutate_if(is.numeric, ~round(., 3)) %>% 
+  kbl() %>% # Align columns right
+  # This table style puts horizontal lines at the top and bottom
+  kable_classic(html_font = "\"Source Sans Pro\", helvetica, sans-serif", 
+                full_width = FALSE) %>% 
+  # Bold headers
+  row_spec(0, bold = TRUE)
 ```

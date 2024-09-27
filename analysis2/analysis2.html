@@ -10,7 +10,6 @@
 
 
 
-<meta name="date" content="2024-09-05" />
 
 <title>Analysis 2: no variable caps</title>
 
@@ -350,7 +349,6 @@ display: none;
 
 
 <h1 class="title toc-ignore">Analysis 2: no variable caps</h1>
-<h4 class="date">2024-09-05</h4>
 
 </div>
 
@@ -401,6 +399,9 @@ my_train_df = train_df %&gt;%
     cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM &gt; 137, 137, 
                               ifelse(INIT_SERUM_SODIUM &lt; 125, 125, 
                                      INIT_SERUM_SODIUM)), 
+    log_MELD_SERUM_SODIUM = log(ifelse(INIT_SERUM_SODIUM &gt; 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM &lt; 125, 125, 
+                                            INIT_SERUM_SODIUM))), 
     log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
     log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
     # INR
@@ -416,6 +417,8 @@ my_train_df = train_df %&gt;%
     MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, 
                                 ifelse(INIT_ALBUMIN &lt; 1.5, 1.5, INIT_ALBUMIN)), 
     cap_ALBUMIN = ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, INIT_ALBUMIN), 
+    log_MELD_ALBUMIN = log(ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN &lt; 1.5, 1.5, INIT_ALBUMIN))), 
     log_cap_ALBUMIN = log(cap_ALBUMIN), 
     log_ALBUMIN = log(INIT_ALBUMIN))
 
@@ -442,6 +445,9 @@ my_test_df = test_df %&gt;%
     cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM &gt; 137, 137, 
                               ifelse(INIT_SERUM_SODIUM &lt; 125, 125, 
                                      INIT_SERUM_SODIUM)), 
+    log_MELD_SERUM_SODIUM = log(ifelse(INIT_SERUM_SODIUM &gt; 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM &lt; 125, 125, 
+                                            INIT_SERUM_SODIUM))), 
     log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
     log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
     # INR
@@ -457,6 +463,8 @@ my_test_df = test_df %&gt;%
     MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, 
                                 ifelse(INIT_ALBUMIN &lt; 1.5, 1.5, INIT_ALBUMIN)), 
     cap_ALBUMIN = ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, INIT_ALBUMIN), 
+    log_MELD_ALBUMIN = log(ifelse(INIT_ALBUMIN &gt; 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN &lt; 1.5, 1.5, INIT_ALBUMIN))), 
     log_cap_ALBUMIN = log(cap_ALBUMIN), 
     log_ALBUMIN = log(INIT_ALBUMIN))
 

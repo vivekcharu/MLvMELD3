@@ -1,7 +1,6 @@
 ---
-title: "Analysis 1: with biologically relevant transformations"
+title: "Analysis 1: MELD 3.0 variables only"
 output: html_document
-date: "2024-09-05"
 ---
 
 ```{r setup, include=FALSE}
@@ -53,12 +52,12 @@ my_factor_vars = list(
   "ASCITES_BL" = c("ASCITES_BLModerate", "ASCITES_BLSlight"), 
   "INIT_ENCEPH" = c("INIT_ENCEPH2", "INIT_ENCEPH3")
 )
-my_vars = c("INIT_BILIRUBIN", "log_BILIRUBIN", 
-            "cap_SERUM_SODIUM", "log_cap_SERUM_SODIUM", 
-            "INIT_INR", "log_INR", 
-            "INIT_SERUM_CREAT", "log_SERUM_CREAT", 
-            "cap_ALBUMIN", "log_cap_ALBUMIN", 
-            "FEMALE", "DIALYSIS", 
+my_vars = c("MELD_BILIRUBIN", "log_MELD_BILIRUBIN", 
+            "MELD_SERUM_SODIUM", "log_MELD_SERUM_SODIUM", 
+            "MELD_INR", "log_MELD_INR", 
+            "MELD_SERUM_CREAT", "log_MELD_SERUM_CREAT",
+            "MELD_ALBUMIN", "log_MELD_ALBUMIN", 
+            "FEMALE", 
             "SurvTime_by90d", "Death_by90d")
 
 my_train_df = train_df %>% 
@@ -82,6 +81,9 @@ my_train_df = train_df %>%
     cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM > 137, 137, 
                               ifelse(INIT_SERUM_SODIUM < 125, 125, 
                                      INIT_SERUM_SODIUM)), 
+    log_MELD_SERUM_SODIUM = log(ifelse(INIT_SERUM_SODIUM > 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM < 125, 125, 
+                                            INIT_SERUM_SODIUM))), 
     log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
     log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
     # INR
@@ -97,6 +99,8 @@ my_train_df = train_df %>%
     MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN > 3.5, 3.5, 
                                 ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN)), 
     cap_ALBUMIN = ifelse(INIT_ALBUMIN > 3.5, 3.5, INIT_ALBUMIN), 
+    log_MELD_ALBUMIN = log(ifelse(INIT_ALBUMIN > 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN))), 
     log_cap_ALBUMIN = log(cap_ALBUMIN), 
     log_ALBUMIN = log(INIT_ALBUMIN))
 
@@ -123,6 +127,9 @@ my_test_df = test_df %>%
     cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM > 137, 137, 
                               ifelse(INIT_SERUM_SODIUM < 125, 125, 
                                      INIT_SERUM_SODIUM)), 
+    log_MELD_SERUM_SODIUM = log(ifelse(INIT_SERUM_SODIUM > 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM < 125, 125, 
+                                            INIT_SERUM_SODIUM))), 
     log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
     log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
     # INR
@@ -138,6 +145,8 @@ my_test_df = test_df %>%
     MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN > 3.5, 3.5, 
                                 ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN)), 
     cap_ALBUMIN = ifelse(INIT_ALBUMIN > 3.5, 3.5, INIT_ALBUMIN), 
+    log_MELD_ALBUMIN = log(ifelse(INIT_ALBUMIN > 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN))), 
     log_cap_ALBUMIN = log(cap_ALBUMIN), 
     log_ALBUMIN = log(INIT_ALBUMIN))
 
@@ -195,15 +204,14 @@ preds_MELD_test = my_test_df %>%
 
 ### Machine learning
 
-For all machine learning models, we will include the following covariates: 
+For all machine learning models, we will include the following covariates, capped as they are form MELD 3.0: 
 
 1. Sex
 2. Bilirubin and log(bilirubin)
-3. Capped sodium (truncated between 125 and 137) and log(capped sodium)
+3. Sodium and log(sodium)
 4. INR and log(INR)
 5. Creatinine and log(creatinine)
-6. Dialysis
-7. Capped albumin (truncated above at 3.5) and log(capped albumin)
+6. Albumin and log(albumin)
 
 #### Regularized Cox PH models (lasso, ridge, and elastic-net)
 
@@ -214,7 +222,7 @@ For all machine learning models, we will include the following covariates:
 
 ```{r}
 # Set up model matrices with all 2-way interactions
-# Results in 73 predictors
+# Results in 61 predictors
 
 my_train_mat = data.frame(
   my_train_df %>% 
@@ -224,11 +232,11 @@ my_train_mat = data.frame(
 ) %>% 
   # Exclude the garbage interactions
   dplyr::select(-c(X.Intercept., 
-                   INIT_BILIRUBIN.log_BILIRUBIN, 
-                   cap_SERUM_SODIUM.log_cap_SERUM_SODIUM, 
-                   INIT_INR.log_INR, 
-                   INIT_SERUM_CREAT.log_SERUM_CREAT, 
-                   cap_ALBUMIN.log_cap_ALBUMIN))
+                   MELD_BILIRUBIN.log_MELD_BILIRUBIN, 
+                   MELD_SERUM_SODIUM.log_MELD_SERUM_SODIUM, 
+                   MELD_INR.log_MELD_INR, 
+                   MELD_SERUM_CREAT.log_MELD_SERUM_CREAT, 
+                   MELD_ALBUMIN.log_MELD_ALBUMIN))
 
 my_test_mat = data.frame(
   my_test_df %>% 
@@ -238,21 +246,21 @@ my_test_mat = data.frame(
 ) %>% 
   # Exclude the garbage interactions
   dplyr::select(-c(X.Intercept., 
-                   INIT_BILIRUBIN.log_BILIRUBIN, 
-                   cap_SERUM_SODIUM.log_cap_SERUM_SODIUM, 
-                   INIT_INR.log_INR, 
-                   INIT_SERUM_CREAT.log_SERUM_CREAT, 
-                   cap_ALBUMIN.log_cap_ALBUMIN))
+                   MELD_BILIRUBIN.log_MELD_BILIRUBIN, 
+                   MELD_SERUM_SODIUM.log_MELD_SERUM_SODIUM, 
+                   MELD_INR.log_MELD_INR, 
+                   MELD_SERUM_CREAT.log_MELD_SERUM_CREAT, 
+                   MELD_ALBUMIN.log_MELD_ALBUMIN))
 ```
 
 ```{r, eval = FALSE}
 # CV to find optimal lambda and alpha parameters for regularized Cox PH models
-# ~15 minutes
-set.seed(1)
+# ~10 minutes
+set.seed(10)
 fit_cv_enet = 
   cva.glmnet(Surv(SurvTime_by90d, Death_by90d) ~ ., 
              data = my_train_mat %>% filter(SurvTime_by90d > 0), 
-             family = "cox", type.measure = "C")
+             family = "cox")
 ```
 
 ```{r, echo = FALSE}
@@ -383,7 +391,7 @@ XGBoost-Tree
 ```{r, eval = FALSE}
 # Fit auto-tuners to training data
 # GBM
-# ~2 minutes
+# ~2 minute
 # getModelInfo("gbm")[[1]]$grid # caret default grid
 gbm_at = auto_tuner(
   learner = lrn("surv.gbm"), 
@@ -416,7 +424,7 @@ xgblinear_at$train(task_train)
 # XGBoost-Tree
 # getModelInfo("xgbTree")[[1]]$grid # caret default grid
 # This takes a long time because there are so many hyperparmaeters
-# 6.5 hours
+# 6 hours + 40 minutes
 xgbtree_at = auto_tuner(
   learner = lrn("surv.xgboost", booster = "gbtree"), 
   search_space = ps(
@@ -487,7 +495,7 @@ CoxBoost
 
 ```{r, eval = FALSE}
 # Run CV to identify optimal penalty and number of boosting steps
-# ~11 hours 
+# 10 hours + 40 minnutes
 set.seed(1)
 fit_cv_coxboost = optimCoxBoostPenalty(
   status = my_train_df$Death_by90d, 
@@ -567,7 +575,7 @@ search_space$trafo <- function(x, param_set) {
 
 
 # Fit auto-tuners to training data
-# ~1 hour + 10 minutes collectively (including benchmarking), with large 
+# ~1 hour + 20 minutes collectively (including benchmarking), with large 
 # variation between models 
 # CoxTime 
 coxtime_at = auto_tuner(
@@ -602,7 +610,7 @@ deepsurv_at = auto_tuner(
   measure = msr("surv.cindex"), 
   terminator = trm("evals", n_evals = 60),
   tuner = tnr("random_search"))
-set_seed(1)
+set_seed(2)
 deepsurv_at$train(task_train)
 
 # Logistic hazard 
@@ -614,7 +622,7 @@ loghaz_at = auto_tuner(
   measure = msr("surv.cindex"), 
   terminator = trm("evals", n_evals = 60),
   tuner = tnr("random_search"))
-set_seed(3) 
+set_seed(1) 
 loghaz_at$train(task_train)
 
 # PC hazard 

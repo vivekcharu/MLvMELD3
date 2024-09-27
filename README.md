@@ -3,7 +3,12 @@
 This repository contains code to reproduce the results presented in the paper 
 
 > **Charu V, Liang JW, Mannalithara A, Kwong AJ, and Kim, WR. Human versus artificial intelligence: Head-to-head comparison of predictive performance of MELD 3.0 and machine learning models. 2024.**
-  
+
+## Analyses
+- **Analysis 1**: MELD 3.0 variables only
+- **Analysis 2**: no variable caps
+- **Analysis 3**: no variable caps + additional clinical variables  
+
 ## R package dependencies
 - Data wrangling and visualization: [`tidyverse`](https://cran.r-project.org/web/packages/tidyverse/index.html), [`compareC`](https://cran.r-project.org/web/packages/compareC/index.html), [`kableExtra`](https://cran.r-project.org/web/packages/kableExtra/index.html), and [`gtsummary`](https://cran.r-project.org/web/packages/gtsummary/index.html)
 - Model fitting: [`survival`](https://cran.r-project.org/web/packages/survival/index.html), [`glmnet`](https://cran.r-project.org/web/packages/glmnet/index.html), [`randomForestSRC`](https://cran.r-project.org/web/packages/randomForestSRC/index.html), [`gbm`](https://cran.r-project.org/web/packages/gbm/index.html), [`xgboost`](https://cran.r-project.org/web/packages/xgboost/index.html), [`CoxBoost`](https://cran.r-project.org/web/packages/CoxBoost/index.html), and [`survivalmodels`](https://cran.r-project.org/web/packages/survivalmodels/index.html)

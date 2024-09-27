@@ -1,7 +1,6 @@
 ---
 title: "Analysis 3: no variable caps + additional variables"
 output: html_document
-date: "2024-09-05"
 ---
 
 ```{r setup, include=FALSE}
@@ -85,6 +84,9 @@ my_train_df = train_df %>%
     cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM > 137, 137, 
                               ifelse(INIT_SERUM_SODIUM < 125, 125, 
                                      INIT_SERUM_SODIUM)), 
+    log_MELD_SERUM_SODIUM = log(ifelse(INIT_SERUM_SODIUM > 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM < 125, 125, 
+                                            INIT_SERUM_SODIUM))), 
     log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
     log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
     # INR
@@ -100,6 +102,8 @@ my_train_df = train_df %>%
     MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN > 3.5, 3.5, 
                                 ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN)), 
     cap_ALBUMIN = ifelse(INIT_ALBUMIN > 3.5, 3.5, INIT_ALBUMIN), 
+    log_MELD_ALBUMIN = log(ifelse(INIT_ALBUMIN > 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN))), 
     log_cap_ALBUMIN = log(cap_ALBUMIN), 
     log_ALBUMIN = log(INIT_ALBUMIN))
 
@@ -126,6 +130,9 @@ my_test_df = test_df %>%
     cap_SERUM_SODIUM = ifelse(INIT_SERUM_SODIUM > 137, 137, 
                               ifelse(INIT_SERUM_SODIUM < 125, 125, 
                                      INIT_SERUM_SODIUM)), 
+    log_MELD_SERUM_SODIUM = log(ifelse(INIT_SERUM_SODIUM > 137, 137, 
+                                     ifelse(INIT_SERUM_SODIUM < 125, 125, 
+                                            INIT_SERUM_SODIUM))), 
     log_cap_SERUM_SODIUM = log(cap_SERUM_SODIUM), 
     log_SERUM_SODIUM = log(INIT_SERUM_SODIUM), 
     # INR
@@ -141,6 +148,8 @@ my_test_df = test_df %>%
     MELD_ALBUMIN = 3.5 - ifelse(INIT_ALBUMIN > 3.5, 3.5, 
                                 ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN)), 
     cap_ALBUMIN = ifelse(INIT_ALBUMIN > 3.5, 3.5, INIT_ALBUMIN), 
+    log_MELD_ALBUMIN = log(ifelse(INIT_ALBUMIN > 3.5, 3.5, 
+                                ifelse(INIT_ALBUMIN < 1.5, 1.5, INIT_ALBUMIN))), 
     log_cap_ALBUMIN = log(cap_ALBUMIN), 
     log_ALBUMIN = log(INIT_ALBUMIN))
 
